@@ -25,19 +25,12 @@ class Keychain {
    * Return Type: void
    */
   constructor() {
-    this.data = { 
-      /* Store member variables that you intend to be public here
-         (i.e. information that will not compromise security if an adversary sees) */
-    };
+    this.data = {};
     this.kvs = {};
     this.secrets = {
-      /* Store member variables that you intend to be private here
-         (information that an adversary should NOT see). */
          masterKey: null,
          salt: null,
     };
-
-    
   };
 
   /** 
@@ -50,11 +43,11 @@ class Keychain {
   static async init(password) {
     let keychain = new Keychain();
 
-    // Generate a random salt (128-bit / 16 bytes)
-    keychain.secrets.salt = getRandomBytes(16); 
+    keychain.secrets.salt = getRandomBytes(SALT_LENGTH); 
 
-    // Derive the masterKey from password and salt
     keychain.secrets.masterKey = await Keychain.deriveKey(password, keychain.secrets.salt);
+
+    keychain.secrets.verification = await Keychain.encrypt(keychain.secrets.masterKey, "test");
 
     return keychain;
   }
@@ -80,19 +73,25 @@ class Keychain {
     let parsed = JSON.parse(repr);
     let keychain = new Keychain();
 
-    // Verify data integrity if trustedDataCheck is provided
+    
     if (trustedDataCheck) {
         let computedHash = await Keychain.hashData(repr);
         if (computedHash !== trustedDataCheck) {
-            throw new Error("Data integrity check failed! Possible rollback attack.");
+          throw new Error("Data integrity check failed! Possible rollback attack.");
         }
     }
 
-    // Restore salt and derive masterKey
     keychain.secrets.salt = decodeBuffer(parsed.salt);
     keychain.secrets.masterKey = await Keychain.deriveKey(password, keychain.secrets.salt);
 
-    keychain.kvs = parsed.kvs || {}; // Restore passwords
+    try {
+      let decryptedTest = await Keychain.decrypt(keychain.secrets.masterKey, parsed.verification);
+      if (decryptedTest !== "test") throw new Error("Incorrect password.");
+    } catch (error) {
+      throw new Error("Incorrect password.");
+    }
+
+    keychain.kvs = parsed.kvs || {};
     return keychain;
   };
 
@@ -111,7 +110,8 @@ class Keychain {
   async dump() {
     let data = JSON.stringify({ 
       kvs: this.kvs,
-      salt: encodeBuffer(this.secrets.salt) // Save salt
+      salt: encodeBuffer(this.secrets.salt),
+      verification: this.secrets.verification
     });
 
     return [data, await Keychain.hashData(data)];
@@ -129,9 +129,12 @@ class Keychain {
   async get(name) {
     if (!this.kvs || !this.secrets.masterKey) throw new Error("Key-value store or master key is not initialized.");
 
-    if (!this.kvs[name]) return null;
+    let hmacKey = await Keychain.deriveHMACKey(this.secrets.masterKey);
+    let obfuscatedKey = await Keychain.computeHMAC(hmacKey, name);
 
-    return await Keychain.decrypt(this.secrets.masterKey, this.kvs[name]);
+    if (!this.kvs[obfuscatedKey]) return null;
+
+    return await Keychain.decrypt(this.secrets.masterKey, this.kvs[obfuscatedKey]);
   };
 
   /** 
@@ -146,8 +149,12 @@ class Keychain {
   */
   async set(name, value) {
     if (!this.kvs || !this.secrets.masterKey) throw new Error("Key-value store or master key is not initialized.");
+
+    let hmacKey = await Keychain.deriveHMACKey(this.secrets.masterKey);
+    let obfuscatedKey = await Keychain.computeHMAC(hmacKey, name);
+
     const encryptedValue = await Keychain.encrypt(this.secrets.masterKey, value);
-    this.kvs[name] = encryptedValue; // Store encrypted password
+    this.kvs[obfuscatedKey] = encryptedValue;
 
   };
 
@@ -161,8 +168,12 @@ class Keychain {
   */
   async remove(name) {
     if (!this.kvs) throw new Error("Key-value store is not initialized.");
-    if (this.kvs.hasOwnProperty(name)) {
-        delete this.kvs[name];
+
+    let hmacKey = await Keychain.deriveHMACKey(this.secrets.masterKey);
+    let obfuscatedKey = await Keychain.computeHMAC(hmacKey, name);
+
+    if (this.kvs.hasOwnProperty(obfuscatedKey)) {
+        delete this.kvs[obfuscatedKey];
         return true;
     }
     return false;

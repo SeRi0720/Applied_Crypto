@@ -1,0 +1,11 @@
+1. We pad all passwords to a fixed length (e.g., 64 characters) before encryption. This ensures all encrypted values have the same size, preventing attackers from inferring password lengths.
+
+2. We store HMAC(domain) instead of plaintext domains. Since HMAC is computed with a secret key, an attacker cannot swap domain-password pairs without detection.
+
+3. Yes, because if an attacker modifies or replaces the stored SHA-256 hash, they can bypass rollback protection. Solutions include TPM, HSMs, or secure storage.
+
+4. Randomized MACs change every time, making lookups impossible. We’d have to store encrypted domain-password pairs and do a linear search (O(n)), which is much slower than HMAC’s O(1) lookup.
+
+5. We can group passwords into fixed-size buckets, round storage to powers of 2, or add dummy records. This prevents an attacker from knowing the exact count.
+
+6. Encrypt shared passwords using an AES key, then encrypt that key separately for each user using public-key cryptography. This keeps personal passwords private while allowing secure sharing.
