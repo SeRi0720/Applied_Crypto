@@ -1,0 +1,1 @@
+docker run --env-file docker.env -p 8000:80 -v E:\code\Applied_Crypto\proj3\data:/data aguinet/secsend:v1.0.0
